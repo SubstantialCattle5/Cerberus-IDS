@@ -1,243 +1,207 @@
-from collections import defaultdict
+from typing import Dict, List, Optional, Union
+from enum import Enum
+from pathlib import Path
+from pydantic import BaseModel, Field, field_validator
 import json
-from typing import Callable
 
 
-class PointRule:
-    """
-    Represents a rule for awarding points based on attribute and value.
-    """
-
-    def __init__(self, attribute: str, value: str | None = None, points: int = 0):
-        """
-        Initialize a PointRule instance.
-
-        Args:
-            attribute (str): The attribute to which the rule applies.
-            value (str | None): The value of the attribute (optional).
-            points (int): The points awarded for the attribute-value combination.
-        """
-        self.attribute = attribute
-        self.value = value
-        self.points = points
-
-    def __str__(self):
-        """
-        Return a string representation of the PointRule.
-
-        Returns:
-            str: String representation of the PointRule.
-        """
-        if self.value:
-            return f"Award {self.points} points for {self.attribute} with value '{self.value}'"
-        else:
-            return f"Award {self.points} points for any value of {self.attribute}"
+class GeoAttribute(str, Enum):
+    """Enumeration of valid geographical attributes."""
+    COUNTRY = "country"
+    COUNTRY_CODE = "country_code"
+    CITY = "city"
+    CONTINENT = "continent"
+    CONTINENT_CODE = "continent_code"
+    REGION = "region"
+    REGION_CODE = "region_code"
+    LATITUDE = "latitude"
+    LONGITUDE = "longitude"
+    IS_EU = "is_eu"
 
 
-class PointRuleBuilder:
-    """
-    Builds and manages rules for awarding points.
-    """
+class PointRule(BaseModel):
+    """Represents a rule for awarding points based on attribute and value."""
+    attribute: GeoAttribute
+    value: Optional[Union[str, int, float, bool, List[str]]] = None
+    points: int = Field(ge=0, description="Points must be non-negative")
+    description: Optional[str] = None
 
-    VALID_ATTRIBUTES: set[str] = {
-        "country", "country_code", "city", "continent", "continent_code",
-        "region", "region_code", "latitude", "longitude", "is_eu",
-        "postal", "calling_code", "capital", "borders", "country_flag",
-        "asn", "org", "isp", "domain", "timezone_id", "timezone_abbr",
-        "timezone_is_dst", "timezone_offset", "timezone_utc", "current_time"
-    }
+    @field_validator('value')
+    def validate_value_for_attribute(cls, v, values):
+        print(values)
+        """Validate that the value matches the expected type for the attribute."""
+        attr = values.data.get("attribute")
+        if not attr:
+            return v
 
-    def __init__(self):
-        """
-        Initialize a PointRuleBuilder instance.
-        """
-        self.rules = []
-        self.rule_groups: dict[str, list[PointRule]] = defaultdict(list)
+        if attr in (GeoAttribute.LATITUDE, GeoAttribute.LONGITUDE):
+            if not isinstance(v, (int, float)):
+                raise ValueError(f"{attr} must be a number")
+            if attr == GeoAttribute.LATITUDE and not -90 <= float(v) <= 90:
+                raise ValueError("Latitude must be between -90 and 90")
+            if attr == GeoAttribute.LONGITUDE and not -180 <= float(v) <= 180:
+                raise ValueError("Longitude must be between -180 and 180")
+        return v
 
-    # VALIDATION FUNCTIONS
-    def validate_attribute_name(self, attribute_name: str) -> bool:
-        """
-        Validate the provided attribute name.
+    def dict(self, *args, **kwargs) -> dict:
+        """Convert the model to a dictionary."""
+        return {
+            "attribute": self.attribute.value,
+            "value": self.value,
+            "points": self.points,
+            "description": self.description
+        }
 
-        Args:
-            attribute_name (str): The attribute name to validate.
 
-        Returns:
-            bool: True if the attribute name is valid, False otherwise.
-        """
-        return attribute_name in PointRuleBuilder.VALID_ATTRIBUTES
+class RuleGroup(BaseModel):
+    """Group of related point rules."""
+    name: str
+    description: Optional[str] = None
+    rules: List[PointRule] = Field(default_factory=list)
 
-    # BUILDER
+    def dict(self, *args, **kwargs) -> dict:
+        """Convert the model to a dictionary."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "rules": [rule.dict() for rule in self.rules]
+        }
 
-    def for_attribute(self, attribute: str):
-        """
-        Begin building rules for the specified attribute.
 
-        Args:
-            attribute (str): The attribute to build rules for.
+class PointRuleSystem(BaseModel):
+    """Main system for managing point rules and groups."""
+    rules: List[PointRule] = Field(default_factory=list)
+    groups: Dict[str, RuleGroup] = Field(default_factory=dict)
 
-        Returns:
-            PointRuleBuilder: The current instance of PointRuleBuilder.
-        """
-        if self.validate_attribute_name(attribute_name=attribute):
-            self.current_attribute = attribute
-            self.current_values = []
-        else:
-            print(f"Error: '{attribute}' is not a valid attribute.")
-        return self
+    def add_rule(self, rule: PointRule) -> None:
+        """Add a single rule to the system."""
+        self.rules.append(rule)
 
-    def with_value(self, *values: str):
-        """
-        Add values to the current attribute being built.
+    def create_group(self, name: str, description: Optional[str] = None) -> RuleGroup:
+        """Create a new rule group."""
+        if name in self.groups:
+            raise ValueError(f"Group '{name}' already exists")
+        group = RuleGroup(name=name, description=description)
+        self.groups[name] = group
+        return group
 
-        Args:
-            values (str): Values to add to the current attribute.
+    def add_to_group(self, group_name: str, rule: PointRule) -> None:
+        """Add a rule to a specific group."""
+        if group_name not in self.groups:
+            raise ValueError(f"Group '{group_name}' does not exist")
+        self.groups[group_name].rules.append(rule)
 
-        Returns:
-            PointRuleBuilder: The current instance of PointRuleBuilder.
-        """
-        self.current_values.extend(values)
-        return self
-
-    def with_points(self, points: int):
-        """
-        Set the points for the current attribute-value combination.
-
-        Args:
-            points (int): Points to assign to the current attribute-value combination.
-
-        Returns:
-            PointRuleBuilder: The current instance of PointRuleBuilder.
-        """
-        try:
-            if points < 0:
-                raise ValueError("Points must be a non-negative integer.")
-            for value in self.current_values:
-                self.rules.append(
-                    PointRule(self.current_attribute, value, points))
-        except ValueError as e:
-            print(f"Error: {e}")
-        return self
-
-    def build(self):
-        """
-        Build and return the list of rules.
-
-        Returns:
-            list[PointRule]: The list of rules.
-        """
-        return self.rules
-
-    def clone_rule(self, index: int):
-        """
-        Clone an existing rule at the specified index.
-
-        Args:
-            index (int): The index of the rule to clone.
-
-        Returns:
-            PointRuleBuilder: A new instance of PointRuleBuilder with the cloned rule added.
-        """
-        if 0 <= index < len(self.rules):
-            cloned_builder = PointRuleBuilder()
-            cloned_builder.rules = self.rules.copy()
-            cloned_builder.rules.append(
-                self.rules[index])  # Append the cloned rule
-            return cloned_builder
-        else:
-            print("Error: Invalid rule index.")
-            return None
-
-    def add_rule_to_group(self, group_name: str, rule: PointRule):
-        """
-        Add a rule to a specific rule group.
-
-        Args:
-            group_name (str): The name of the rule group.
-            rule (PointRule): The rule to be added to the group.
-        """
-        if group_name not in self.rule_groups:
-            self.rule_groups[group_name] = []  # Initialize the group if it doesn't exist
-        self.rule_groups[group_name].append(rule)
-
-    def apply_operation_to_group(self, group_name: str, operation: Callable):
-        """
-        Apply a specified operation to all rules in a rule group.
-
-        Args:
-            group_name (str): The name of the rule group.
-            operation (Callable): The operation to be applied to each rule.
-        """
-        if group_name in self.rule_groups:
-            for rule in self.rule_groups[group_name]:
-                operation(rule)
-        else:
-            print(f"Error: Rule group '{group_name}' not found.")
-
-    # JSON SHIZ
-    def save_to_json(self, filename: str = "custom_rules.json"):
-        """
-        Save the rules to a JSON file.
-
-        Args:
-            filename (str): The filename to save the rules to (default is 'custom_rules.json').
-        """
-        data = defaultdict(dict)
+    def evaluate_rules(self, data: Dict) -> int:
+        """Evaluate all rules against provided data and return total points."""
+        total_points = 0
         
-        # Add rules from self.rules
+        # Evaluate individual rules
         for rule in self.rules:
-            data[rule.attribute][rule.value] = rule.points
+            if rule.attribute.value in data:
+                if rule.value is None or data[rule.attribute.value] == rule.value:
+                    total_points += rule.points
         
-        # Add rules from rule groups
-        for group_rules in self.rule_groups.values():
-            for rule in group_rules:
-                data[rule.attribute][rule.value] = rule.points
+        # Evaluate group rules
+        for group in self.groups.values():
+            for rule in group.rules:
+                if rule.attribute.value in data:
+                    if rule.value is None or data[rule.attribute.value] == rule.value:
+                        total_points += rule.points
         
-        try:
-            with open(filename, "w") as file:
-                json.dump(data, file, indent=4)
-            print(f"Rules saved to '{filename}' successfully.")
-        except Exception as e:
-            print(f"Error: {e}")
+        return total_points
 
-    def load_from_json(self, filename: str):
-        """
-        Load rules from a JSON file.
-
-        Args:
-            filename (str): The filename from which to load rules.
-        """
+    def save_rules(self, filepath: Union[str, Path]) -> None:
+        """Save rules and groups to JSON."""
+        data = {
+            "rules": [rule.dict() for rule in self.rules],
+            "groups": {name: group.dict() for name, group in self.groups.items()}
+        }
+        
+        filepath = Path(filepath)
         try:
-            with open(filename, "r") as file:
-                data = json.load(file)
-            for attribute, value_points in data.items():
-                for value, points in value_points.items():
-                    self.for_attribute(attribute).with_value(
-                        value).with_points(points)
-        except FileNotFoundError:
-            print(f"Error: File '{filename}' not found.")
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            with filepath.open('w') as f:
+                json.dump(data, f, indent=4)
         except Exception as e:
-            print(f"Error: {e}")
+            raise IOError(f"Failed to save rules: {e}")
+
+    @classmethod
+    def load_rules(cls, filepath: Union[str, Path]) -> 'PointRuleSystem':
+        """Load rules and groups from JSON."""
+        filepath = Path(filepath)
+        try:
+            with filepath.open('r') as f:
+                data = json.load(f)
+                
+            system = cls()
+            
+            # Load individual rules
+            for rule_data in data.get("rules", []):
+                rule_data["attribute"] = GeoAttribute(rule_data["attribute"])
+                system.add_rule(PointRule(**rule_data))
+            
+            # Load groups
+            for group_name, group_data in data.get("groups", {}).items():
+                group = system.create_group(
+                    name=group_name,
+                    description=group_data.get("description")
+                )
+                for rule_data in group_data.get("rules", []):
+                    rule_data["attribute"] = GeoAttribute(rule_data["attribute"])
+                    group.rules.append(PointRule(**rule_data))
+                    
+            return system
+            
+        except Exception as e:
+            raise IOError(f"Failed to load rules: {e}")
+
+
+def example_usage():
+    """Example usage of the point rules system."""
+    # Create a new system
+    system = PointRuleSystem()
+    
+    # Add individual rules
+    system.add_rule(
+        PointRule(
+            attribute=GeoAttribute.LATITUDE,
+            value=45.5,
+            points=10,
+            description="Northern latitude bonus"
+        )
+    )
+    
+    # Create a group for European countries
+    eu_group = system.create_group("eu_countries", "European Union Member States")
+    
+    # Add rules to the group
+    system.add_to_group(
+        "eu_countries",
+        PointRule(
+            attribute=GeoAttribute.IS_EU,
+            value=True,
+            points=20,
+            description="EU member state bonus"
+        )
+    )
+    
+    # Save the rules
+    system.save_rules("point_rules.json")
+    
+    # Test evaluation
+    test_data = {
+        "latitude": 45.5,
+        "is_eu": True,
+        "country": "France"
+    }
+    
+    total_points = system.evaluate_rules(test_data)
+    print(f"Total points: {total_points}")
+    
+    # Load and verify
+    loaded_system = PointRuleSystem.load_rules("point_rules.json")
+    return loaded_system
 
 
 if __name__ == "__main__":
-    point_rule_builder = PointRuleBuilder()
-    point_rule_builder.load_from_json("test.json")
-
-    # Cloning a rule
-    cloned_builder = point_rule_builder.clone_rule(0)  # Clone the rule at index 0
-
-    # Adding rules to groups
-    rule1 = PointRule("country", "US", 10)
-    rule2 = PointRule("country", "UK", 98)
-    point_rule_builder.add_rule_to_group("group1", rule1)  # Add rule1 to group1
-    point_rule_builder.add_rule_to_group("group1", rule2)  # Add rule2 to group2
-
-    # Applying an operation to a group
-    def double_points(rule):
-        rule.points *= 2
-
-    point_rule_builder.apply_operation_to_group("group1", double_points)  # Double points for all rules in "group1"
-
-    # Saving rules to JSON
-    point_rule_builder.save_to_json("updated_rules.json")
+    example_usage()
