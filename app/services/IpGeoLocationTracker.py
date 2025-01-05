@@ -4,41 +4,8 @@ import requests
 from requests.exceptions import RequestException
 import json
 from datetime import datetime
-
-@dataclass
-class TimezoneInfo:
-    id: str
-    abbr: str
-    is_dst: bool
-    offset: int
-    utc: str
-    current_time: datetime
-
-@dataclass
-class ConnectionInfo:
-    asn: int
-    org: str
-    isp: str
-    domain: str
-
-@dataclass
-class LocationInfo:
-    type: str
-    continent: str
-    continent_code: str
-    country: str
-    country_code: str
-    region: str
-    region_code: str
-    city: str
-    latitude: float
-    longitude: float
-    is_eu: bool
-    postal: str
-    calling_code: str
-    capital: str
-    borders: List[str]
-    country_flag: str
+from app.models.IpGeoLocationTrackerModel import TimezoneInfo, ConnectionInfo, LocationInfo
+from app.util.ValidateIpAddress import ValidateIpAddress
 
 class IpGeoLocationTracker:
     """
@@ -59,7 +26,7 @@ class IpGeoLocationTracker:
         Raises:
             ValueError: If the IP address format is invalid
         """
-        if not self._validate_ip(ip):
+        if not ValidateIpAddress(ip):
             raise ValueError(f"Invalid IP address format: {ip}")
             
         self.ip = ip
@@ -67,13 +34,6 @@ class IpGeoLocationTracker:
         self.connection: Optional[ConnectionInfo] = None
         self.timezone: Optional[TimezoneInfo] = None
         
-    @staticmethod
-    def _validate_ip(ip: str) -> bool:
-        """Validate IP address format."""
-        parts = ip.split('.')
-        if len(parts) != 4:
-            return False
-        return all(part.isdigit() and 0 <= int(part) <= 255 for part in parts)
 
     def track_ip(self) -> bool:
         """

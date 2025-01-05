@@ -1,22 +1,8 @@
 from typing import Dict, List, Optional, Union
-from enum import Enum
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 import json
-
-
-class GeoAttribute(str, Enum):
-    """Enumeration of valid geographical attributes."""
-    COUNTRY = "country"
-    COUNTRY_CODE = "country_code"
-    CITY = "city"
-    CONTINENT = "continent"
-    CONTINENT_CODE = "continent_code"
-    REGION = "region"
-    REGION_CODE = "region_code"
-    LATITUDE = "latitude"
-    LONGITUDE = "longitude"
-    IS_EU = "is_eu"
+from app.models.PointRuleBuilderModel import GeoAttribute 
 
 
 class PointRule(BaseModel):
@@ -28,7 +14,6 @@ class PointRule(BaseModel):
 
     @field_validator('value')
     def validate_value_for_attribute(cls, v, values):
-        print(values)
         """Validate that the value matches the expected type for the attribute."""
         attr = values.data.get("attribute")
         if not attr:
@@ -156,7 +141,10 @@ class PointRuleSystem(BaseModel):
             raise IOError(f"Failed to load rules: {e}")
 
 
-def example_usage():
+
+
+
+if __name__ == "__main__":
     """Example usage of the point rules system."""
     # Create a new system
     system = PointRuleSystem()
@@ -200,8 +188,4 @@ def example_usage():
     
     # Load and verify
     loaded_system = PointRuleSystem.load_rules("point_rules.json")
-    return loaded_system
-
-
-if __name__ == "__main__":
-    example_usage()
+    print(loaded_system)
