@@ -38,6 +38,7 @@ class ReputationManager:
             self.geo_tracker.timezone
         )
     
+    
     def analyze_ip(self, ip_address: str) -> dict:
         """Analyze IP address using both geolocation and reputation data."""
         # Check blacklist first
