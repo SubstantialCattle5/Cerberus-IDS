@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Optional, List, Dict
+from typing import Optional, Dict
 import requests
 from requests.exceptions import RequestException
 import json
